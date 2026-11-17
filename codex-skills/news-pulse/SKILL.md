@@ -24,6 +24,25 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 - 看到新闻标题，但不确定是噪音还是真信号
 - **不适用**：完整投研（用 `/investment-team`）、财报深读（用 `/earnings-review`）、长期论文跟踪（用 `/thesis-tracker`）
 
+## ⚠️ 侦察工具链：WebSearch 403 时的降级方案（派发前先读）
+
+WebSearch 走火山方舟后端，可能返回 `403 Access denied for web search`（方舟控制台未开通 Web 搜索）。**派发 subagent 之前先试一次 WebSearch**：
+
+- **可用** → 正常派发，按模板执行
+- **403** → 降级。关键：把降级工具链**直接写进每个 subagent 的 prompt**（写明"WebSearch 不可用，禁止重试"），不要让 4 个 agent 各自撞墙浪费 10 分钟——2026-09 智谱那轮就是这么"没结果"的
+
+已验证有效的降级工具链（WebSearch 全程不可用时仍可完成高质量归因）：
+
+1. **新闻搜索替代 = Google News RSS**（WebFetch 直抓，XML 含标题+日期+跳转链）：
+   `https://news.google.com/rss/search?q={关键词}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`（中文）/ `hl=en&gl=US&ceid=US:en`（英文）
+   多组关键词轮换；个别词组可能被上游 400 内容过滤拦截，换同义词或用 `curl` 直抓 XML，不死磕
+2. **个股新闻页**：`https://www.google.com/finance/quote/{TICKER}`（如 `2513:HKG`），页面下方自带最新新闻列表（含 Reuters/CNBC 等）
+3. **行情事实先行**（免搜索、定位异动本身）：curl 东财日K
+   `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={SECID}&fields1=f1,f2&fields2=f51,f53&klt=101&fqt=1&end=20500101&lmt=30`
+   secid：港股 `116.02513`、指数 `100.HSI`/`100.HSTECH`、A股 `0.{code}`/`1.{code}`；备选腾讯 `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=hk02513,day,,,45,qfq`
+4. **一手公告**：港交所披露易（www1.hkexnews.hk）搜索公告列表，公告 PDF 直链可 WebFetch——一手信源优先于任何媒体转述
+5. **指数/宏观对照**：东财同上（`100.HSI`/`100.HSTECH`）；Yahoo/Stooq 部分代码会 404，失败就换东财
+
 ## 执行流程
 
 ### 第一步：确认参数与场景
@@ -137,7 +156,7 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 {任务description的内容}
 
 **侦察方法**：
-- 优先使用 WebSearch 搜索时效性查询（关键词加日期或"最近"、"latest"、"2026"）
+- 优先使用 WebSearch 搜索时效性查询（关键词加日期或"最近"、"latest"、"2026"）；**若 WebSearch 返回 403，立即切换派发方写进本 prompt 的降级工具链（Google News RSS / 行情 API / 披露易），禁止反复重试 WebSearch**
 - 关键事件用 WebFetch 精读原始来源（公告原文、财报、监管文件）
 - 对每个事件做"独立信源验证"——传言至少要 2 个独立来源
 - **不要被标题党误导**：标题与正文不符的事件要标注"标题误导"
